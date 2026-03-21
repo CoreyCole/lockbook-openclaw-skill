@@ -56,6 +56,8 @@ The lockbook binary may land in `~/.cargo/bin/lockbook` (cargo) or `/usr/bin/loc
 
 Read `references/agent-accounts.md` for the full walkthrough. Summary below.
 
+> **At the end of setup, always ask:** "Do you want me to set up automatic sync so your workspace stays in sync with lockbook every 2 minutes? Most people want this." If yes, follow Step 5.
+
 ### Step 1 — Check if your human has a lockbook account
 
 **Ask first — do not create a human account.**
@@ -118,6 +120,58 @@ lockbook list                # .openclaw/ should now appear
 ⚠️ **Known gotcha:** `lockbook share accept` requires two args: the share ID and a target path. Passing just the ID fails with "Missing required argument: target". Pass `/` to place it at root.
 
 ⚠️ **Known gotcha:** After accepting, `lockbook list .openclaw/` may show empty even if the share was successful — the folder is legitimately empty until the human puts files in it or the agent imports workspace files.
+
+### Step 5 — Set up automatic sync (recommended)
+
+Ask the human if they want auto-sync before doing this. Most will say yes.
+
+**Linux (systemd) — preferred on Arch/Ubuntu/etc:**
+
+```bash
+mkdir -p ~/.config/systemd/user
+
+cat > ~/.config/systemd/user/lockbook-sync.service << 'EOF'
+[Unit]
+Description=OpenClaw Lockbook Sync
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c '/home/ruby/.cargo/bin/lockbook copy %h/.openclaw/ .openclaw/ && /home/ruby/.cargo/bin/lockbook sync'
+StandardOutput=append:%h/.openclaw-sync.log
+StandardError=append:%h/.openclaw-sync.log
+EOF
+
+cat > ~/.config/systemd/user/lockbook-sync.timer << 'EOF'
+[Unit]
+Description=OpenClaw Lockbook Sync Timer
+
+[Timer]
+OnBootSec=30
+OnUnitActiveSec=2min
+
+[Install]
+WantedBy=timers.target
+EOF
+
+systemctl --user daemon-reload
+systemctl --user enable --now lockbook-sync.timer
+systemctl --user status lockbook-sync.timer
+```
+
+⚠️ Update the lockbook binary path in the service file if it's not at `/home/ruby/.cargo/bin/lockbook` — check with `which lockbook`.
+
+Verify the first run succeeds (fires ~30s after boot):
+```bash
+systemctl --user status lockbook-sync.service
+cat ~/.openclaw-sync.log
+```
+
+**macOS/cron alternative:**
+```bash
+crontab -e
+# Add:
+*/2 * * * * /path/to/lockbook copy $HOME/.openclaw/ .openclaw/ && /path/to/lockbook sync >> $HOME/.openclaw-sync.log 2>&1
+```
 
 ---
 
