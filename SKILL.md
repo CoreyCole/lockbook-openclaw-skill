@@ -130,7 +130,7 @@ All sync uses import/export. No NFS mount required — works everywhere.
 lockbook sync && lockbook export .openclaw/ ~/.openclaw/
 
 # Push local disk → lockbook
-lockbook import ~/.openclaw/ .openclaw/ && lockbook sync
+lockbook copy ~/.openclaw/ .openclaw/ && lockbook sync
 ```
 
 **Before reading shared files** — always pull first.
@@ -145,9 +145,9 @@ lockbook sync                                          # Sync with server
 lockbook list                                          # List all files/folders
 lockbook list .openclaw/                               # List contents of shared folder
 lockbook export .openclaw/ ~/.openclaw/                # Pull lockbook → local
-lockbook import ~/.openclaw/ .openclaw/                # Push local → lockbook
+lockbook copy ~/.openclaw/ .openclaw/                # Push local → lockbook
 lockbook export .openclaw/somefile.md /tmp/somefile.md # Export single file
-lockbook import /tmp/report.md .openclaw/reports/      # Import single file
+lockbook copy /tmp/report.md .openclaw/reports/      # Import single file
 lockbook usage                                         # Check storage usage
 lockbook share new .openclaw/ <username> --mode=write  # Share a folder
 lockbook share pending                                 # List pending shares
