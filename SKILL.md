@@ -138,9 +138,11 @@ lockbook list                # .openclaw/ should now appear
 
 ⚠️ **Known gotcha:** `lockbook share accept` requires two args: the share ID and a target path. Passing just the ID fails with "Missing required argument: target". Pass `/` to place it at root.
 
-### Step 5 — Set up `lockbook fs` (recommended)
+### Step 5 — Set up `lockbook fs` (strongly recommended)
 
-`lockbook fs` mounts lockbook at `/tmp/lockbook` and syncs every 30 seconds — reads and writes both work transparently.
+`lockbook fs` is the correct sync solution. It mounts lockbook at `/tmp/lockbook` as an NFS filesystem — reads and writes go directly to lockbook, syncing every 30 seconds with built-in 3-way merge for text files.
+
+> ⚠️ **Windows note:** `lockbook fs` requires NFS, which is only available on Windows Pro/Enterprise (not Windows Home). If your agent runs on Windows Home, `lockbook fs` will not work. On Linux and macOS it works out of the box.
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -194,20 +196,20 @@ echo "updated" >> /tmp/lockbook/.openclaw/workspace/MEMORY.md
 
 ---
 
-## Seeding a new lockbook account (bulk import)
+## Initial seeding (first-time only)
 
-For first-time setup or migrating existing workspace files into lockbook, use `lockbook copy` once. This is a **one-shot import tool**, not a sync tool.
+If you need to seed a fresh lockbook account from existing disk files, use `lockbook copy` once. After that, `lockbook fs` takes over.
 
 ```bash
 # Create destination folder in lockbook first
 lockbook new .openclaw/workspace/
 
-# Then copy workspace contents into it (once)
+# Copy once to seed
 lockbook copy ~/.openclaw/workspace/ .openclaw/workspace/
 lockbook sync
 ```
 
-⚠️ **`lockbook copy` is not idempotent** — running it twice creates duplicates (`.openclaw/workspace-1/`, etc.). Use it for initial seeding only. After that, let `lockbook fs` handle sync.
+⚠️ **`lockbook copy` is not idempotent** — running it twice creates duplicates. Seed once, then switch to `lockbook fs`.
 
 ---
 
@@ -230,7 +232,8 @@ lockbook share accept <id> /                           # Accept a share (target 
 
 ## Gotchas
 
-- **`lockbook fs` is the only safe ongoing sync method** — `lockbook copy` on a timer creates duplicates
+- **`lockbook fs` is the correct sync solution** — it handles bidirectional sync and 3-way merge natively. `lockbook copy` is a one-shot import tool only.
+- **`lockbook fs` requires NFS** — works on Linux and macOS out of the box. On Windows, requires Windows Pro/Enterprise (NFS not available on Windows Home)
 - **`share accept` needs a target** — always pass `/` as the second arg or it errors with "Missing required argument: target"
 - **Free tier is 25MB compressed** (~125MB of text). Run `lockbook usage` to check
 - **Agent key must live outside `~/.openclaw`** — store at `~/.lockbook-agent-key` so it doesn't sync to the human
