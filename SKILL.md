@@ -127,23 +127,29 @@ Ask the human if they want auto-sync before doing this. Most will say yes.
 
 **Linux (systemd) — preferred on Arch/Ubuntu/etc:**
 
-Auto-sync pulls from lockbook → disk only. The human pushes files from their device via the lockbook app or CLI. The agent never pushes in a loop (it creates duplicates every run).
+Run `lockbook fs` as a persistent systemd service. It mounts lockbook at `/tmp/lockbook` and syncs every 30 seconds — reads and writes both work.
 
 ```bash
 mkdir -p ~/.config/systemd/user
 
-cat > ~/.config/systemd/user/lockbook-sync.service << 'EOF'
+cat > ~/.config/systemd/user/lockbook-fs.service << 'EOF'
 [Unit]
-Description=OpenClaw Lockbook Sync (pull only)
+Description=Lockbook NFS filesystem
+After=network.target
 
 [Service]
-Type=oneshot
-ExecStart=/bin/bash -c '/home/ruby/.cargo/bin/lockbook sync && /home/ruby/.cargo/bin/lockbook export .openclaw/ /tmp/lockbook-openclaw/ 2>/dev/null; echo "synced at $(date)"'
+Type=simple
+ExecStart=/bin/bash -c 'echo Y | /path/to/lockbook fs'
+Restart=on-failure
+RestartSec=10
 StandardOutput=append:%h/.openclaw-sync.log
 StandardError=append:%h/.openclaw-sync.log
+
+[Install]
+WantedBy=default.target
 EOF
 
-cat > ~/.config/systemd/user/lockbook-sync.timer << 'EOF'
+cat > ~/.config/systemd/user/lockbook-fs.service << 'EOF'
 [Unit]
 Description=OpenClaw Lockbook Sync Timer
 
@@ -152,49 +158,52 @@ OnBootSec=30
 OnUnitActiveSec=2min
 
 [Install]
-WantedBy=timers.target
+WantedBy=default.target
 EOF
 
 systemctl --user daemon-reload
-systemctl --user enable --now lockbook-sync.timer
-systemctl --user status lockbook-sync.timer
+systemctl --user enable --now lockbook-fs.service
+systemctl --user status lockbook-fs.service
 ```
 
 ⚠️ Update the lockbook binary path in the service file if it's not at `/home/ruby/.cargo/bin/lockbook` — check with `which lockbook`.
 
 Verify the first run succeeds (fires ~30s after boot):
 ```bash
-systemctl --user status lockbook-sync.service
+systemctl --user status lockbook-fs.service
 cat ~/.openclaw-sync.log
 ```
 
-**macOS/cron alternative:**
-```bash
-crontab -e
-# Add:
-*/2 * * * * /path/to/lockbook copy $HOME/.openclaw/ .openclaw/ && /path/to/lockbook sync >> $HOME/.openclaw-sync.log 2>&1
-```
+**macOS:** `lockbook fs` works the same way — run it as a launchd service or just keep it in a terminal.
 
 ---
 
-## Sync
+## Sync — use `lockbook fs` (NFS mount)
 
-**Key insight:** `lockbook copy` and `lockbook export` both wrap the source directory as a new child inside the destination — there is no "sync in place" mode. Every `lockbook copy <dir> <dest>` call creates a new nested copy.
+The right way to sync bidirectionally is `lockbook fs` — it mounts your lockbook as an NFS filesystem at `/tmp/lockbook`. Any file written there is automatically synced to the lockbook server every 30 seconds. No copy/delete dance needed.
 
-**The correct mental model:** lockbook is for the **human to push files to the agent**, not the other way around. The agent's workspace lives on disk and doesn't need to be pushed back to lockbook. Auto-sync should only pull (lockbook → disk).
-
-```bash
-# Pull: lockbook → local disk (safe, human-to-agent direction)
-lockbook sync && lockbook export .openclaw/ /tmp/lockbook-openclaw/
-# Files land at /tmp/lockbook-openclaw/.openclaw/<your files>
-
-# Push: human does this from their device (app or CLI)
-# Agent should NOT run lockbook copy in a loop — it creates duplicates every run
+```
+/tmp/lockbook/.openclaw/workspace/   ← reads/writes here sync to lockbook automatically
 ```
 
-⚠️ **Never run `lockbook copy <dir>` on a timer** — it creates a new nested directory every run (`.openclaw/`, `.openclaw-1/`, `.openclaw-2/`...). There is no idempotent push. If you need the agent to write files back to lockbook, do it manually for specific files only:
+⚠️ **Never use `lockbook copy <dir>` on a timer** — it creates a new nested duplicate every run with no way to detect collisions. It's an import tool, not a sync tool.
+
+### Checking the mount
+
 ```bash
-lockbook copy /path/to/specific-file.md .openclaw/
+ls /tmp/lockbook          # should show your lockbook root
+ls /tmp/lockbook/.openclaw/workspace/
+```
+
+### Manual sync (without fs mount)
+
+```bash
+# Pull only — lockbook → local disk
+lockbook sync && lockbook export .openclaw/ /tmp/lockbook-export/
+# Files land at /tmp/lockbook-export/.openclaw/
+
+# Push a specific file (not a directory)
+lockbook copy /path/to/file.md .openclaw/
 lockbook sync
 ```
 
