@@ -180,19 +180,21 @@ ls /tmp/lockbook/.openclaw/
 
 ---
 
-## Using the mounted filesystem
+## Architecture: disk is primary, lockbook is the mirror
 
-Once `lockbook fs` is running, the agent can read and write files directly at `/tmp/lockbook/.openclaw/`. Changes sync to the human's devices automatically.
+**`~/.openclaw/workspace/` is always the source of truth.** The agent reads and writes there directly. Lockbook is a best-effort mirror for sharing with the human — if the NFS mount goes down, the agent keeps running unaffected.
 
-```bash
-# Agent writes to the shared workspace
-echo "updated" >> /tmp/lockbook/.openclaw/workspace/MEMORY.md
-
-# Human sees it on their phone within 30s
-
-# Human edits the same file from their phone
-# Agent sees the merged result within 30s
 ```
+~/.openclaw/workspace/          ← primary (local disk, always available)
+        ↓ rsync every 2 min (only if mounted)
+/tmp/lockbook/.openclaw/workspace/  ← lockbook mirror (best-effort)
+        ↓ lockbook fs syncs to server every 30s
+Human's phone / desktop
+```
+
+A separate `lockbook-sync` systemd timer runs every 2 minutes. It checks if the mount is healthy first — if lockbook is down, it logs and exits cleanly without affecting anything.
+
+**The mount going down never takes down the gateway or agent.**
 
 ---
 
