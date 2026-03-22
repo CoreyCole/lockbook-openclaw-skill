@@ -138,7 +138,7 @@ lockbook list                # .openclaw/ should now appear
 
 ⚠️ **Known gotcha:** `lockbook share accept` requires two args: the share ID and a target path. Passing just the ID fails with "Missing required argument: target". Pass `/` to place it at root.
 
-### Step 5 — Set up `lockbook fs` (strongly recommended)
+### Step 5 — Set up `lockbook fs` + sync watchers (strongly recommended)
 
 `lockbook fs` is the correct sync solution. It mounts lockbook at `/tmp/lockbook` as an NFS filesystem — reads and writes go directly to lockbook, syncing every 30 seconds with built-in 3-way merge for text files.
 
@@ -170,13 +170,85 @@ systemctl --user enable --now lockbook-fs.service
 
 ⚠️ Update the lockbook binary path if it's not at `/home/ruby/.cargo/bin/lockbook` — check with `which lockbook`.
 
-Verify it's mounted:
+Then set up the sync watcher (requires `inotify-tools` — `yay -S inotify-tools`):
+
 ```bash
-ls /tmp/lockbook          # should show your lockbook root
-ls /tmp/lockbook/.openclaw/
+# Create the sync script
+cat > ~/.local/bin/lockbook-sync.sh << 'SCRIPT'
+#!/bin/bash
+MOUNT=/tmp/lockbook/.openclaw
+LOCAL=$HOME/.openclaw
+LOG=$HOME/.openclaw-sync.log
+
+if ! mountpoint -q /tmp/lockbook 2>/dev/null; then
+  echo "$(date -u +%FT%TZ) lockbook not mounted, skipping" >> "$LOG"
+  exit 0
+fi
+
+mkdir -p "$MOUNT"
+rsync -a --delete \
+  --exclude="*.sqlite*" --exclude="media/" \
+  --exclude="agents/sessions/" --exclude="credentials/" \
+  --exclude=".git/" \
+  "$LOCAL/" "$MOUNT/" \
+  && echo "$(date -u +%FT%TZ) sync ok" >> "$LOG" \
+  || echo "$(date -u +%FT%TZ) sync failed" >> "$LOG"
+SCRIPT
+chmod +x ~/.local/bin/lockbook-sync.sh
+
+# inotify watcher — syncs on every file change
+cat > ~/.config/systemd/user/lockbook-watch.service << 'EOF'
+[Unit]
+Description=OpenClaw → Lockbook inotify watcher
+After=lockbook-fs.service
+
+[Service]
+Type=simple
+ExecStart=/bin/bash -c 'while inotifywait -r -e modify,create,delete,move \
+  --exclude "(\.sqlite|media/|agents/sessions/|credentials/)" \
+  $HOME/.openclaw/ 2>/dev/null; do \
+  $HOME/.local/bin/lockbook-sync.sh; \
+done'
+Restart=on-failure
+RestartSec=5
+EOF
+
+# Timer fallback — runs every 2 min regardless
+cat > ~/.config/systemd/user/lockbook-sync.service << 'EOF'
+[Unit]
+Description=OpenClaw → Lockbook sync (timer fallback)
+After=lockbook-fs.service
+
+[Service]
+Type=oneshot
+ExecStart=/home/ruby/.local/bin/lockbook-sync.sh
+EOF
+
+cat > ~/.config/systemd/user/lockbook-sync.timer << 'EOF'
+[Unit]
+Description=OpenClaw → Lockbook sync timer
+
+[Timer]
+OnBootSec=60
+OnUnitActiveSec=2min
+
+[Install]
+WantedBy=timers.target
+EOF
+
+systemctl --user daemon-reload
+systemctl --user enable --now lockbook-fs.service
+systemctl --user enable --now lockbook-watch.service
+systemctl --user enable --now lockbook-sync.timer
 ```
 
-**macOS:** `lockbook fs` works the same — run it as a launchd service or keep it in a terminal.
+Verify:
+```bash
+ls /tmp/lockbook/.openclaw/     # should show workspace files
+tail -f ~/.openclaw-sync.log    # watch sync activity
+```
+
+**macOS:** `lockbook fs` works the same. Use `fswatch` instead of `inotifywait` for the file watcher.
 
 ---
 
@@ -192,9 +264,21 @@ ls /tmp/lockbook/.openclaw/
 Human's phone / desktop
 ```
 
-A separate `lockbook-sync` systemd timer runs every 2 minutes. It checks if the mount is healthy first — if lockbook is down, it logs and exits cleanly without affecting anything.
+Two systemd units keep the mirror current:
+- **`lockbook-watch`** — uses `inotifywait` to trigger a sync immediately on any file change in `~/.openclaw/`
+- **`lockbook-sync` timer** — fallback that runs every 2 minutes regardless
 
-**The mount going down never takes down the gateway or agent.**
+Both check mount health first and bail gracefully if lockbook is down. **The mount going down never affects the gateway or agent.**
+
+### What gets synced
+
+Everything except:
+- `*.sqlite*` — databases (in use, can't rsync safely)
+- `media/` — large inbound attachments
+- `agents/sessions/` — huge session transcripts
+- `credentials/` — sensitive keys
+
+All of `workspace/`, `memory/`, `logs/`, `MEMORY.md`, `SOUL.md`, `HEARTBEAT.md` etc. sync in real time.
 
 ---
 
