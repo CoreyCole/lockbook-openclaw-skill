@@ -375,6 +375,80 @@ No changes to the core data model, tree operations, or sync logic.
 
 ---
 
+## Optimization: Build path map upfront with `list_metadatas`
+
+The original plan calls `get_children()` at every directory level during the recursive walk — O(N) round trips for N directories.
+
+**Better approach:** call `list_metadatas()` once before the walk, build a `HashMap<String, File>` keyed by full lockbook path, then do O(1) lookups during the recursive import.
+
+### `list_metadatas` signature
+
+```rust
+// libs/lb/lb-rs/src/service/file.rs:123
+pub async fn list_metadatas(&self) -> LbResult<Vec<File>>
+```
+
+Returns a flat `Vec<File>`. Each `File` has `id`, `parent` (UUID), `name`, `file_type` — no pre-computed path.
+
+### Build the path map
+
+```rust
+async fn build_path_map(&self) -> LbResult<HashMap<String, File>> {
+    let all_files = self.list_metadatas().await?;
+    let by_id: HashMap<Uuid, &File> = all_files.iter().map(|f| (f.id, f)).collect();
+
+    let mut path_map = HashMap::new();
+    for file in &all_files {
+        let mut parts = vec![file.name.clone()];
+        let mut cur = file;
+        // Walk parent chain to root
+        while let Some(parent) = by_id.get(&cur.parent) {
+            parts.push(parent.name.clone());
+            cur = parent;
+        }
+        parts.reverse();
+        let path = format!("/{}", parts.join("/"));
+        path_map.insert(path, file.clone());
+    }
+    path_map
+}
+```
+
+### Updated `import_file_recursively_patch`
+
+Replace `get_children()` lookup with path map lookup:
+
+```rust
+async fn import_file_recursively_patch<F: Fn(ImportStatus)>(
+    &self,
+    disk_path: &Path,
+    dest: Uuid,
+    dest_lb_path: &str,        // ← pass current lockbook path during recursion
+    path_map: &HashMap<String, File>,
+    update_status: &F,
+) -> LbResult<()> {
+    let name = disk_path.file_name().and_then(|n| n.to_str())
+        .ok_or(LbErrKind::DiskPathInvalid)?.to_string();
+    let lb_path = format!("{}/{}", dest_lb_path.trim_end_matches('/'), name);
+
+    let file_type = if disk_path.is_file() { FileType::Document } else { FileType::Folder };
+
+    let file = match path_map.get(&lb_path) {
+        Some(existing) => {
+            if existing.is_folder() != disk_path.is_dir() {
+                return Err(LbErrKind::Validation(ValidationFailure::FileNotDocument).into());
+            }
+            existing.clone()
+        }
+        None => self.create_file(&name, &dest, file_type).await?,
+    };
+
+    // ... rest of write_document / recurse logic unchanged
+}
+```
+
+`import_files_patch` calls `build_path_map()` once, then passes `path_map` and the current lockbook path down through the recursion.
+
 ## Implementation Order
 
 1. Add `import_files_patch` and `import_file_recursively_patch` to `import_export.rs`
