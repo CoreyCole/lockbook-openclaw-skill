@@ -162,6 +162,19 @@ systemctl --user restart lockbook-fs.service
 
 ---
 
+## Symlink ~/.openclaw/workspace to the mount
+
+Once `lockbook fs` is running and the shared folder is populated, symlink the workspace so the agent reads/writes directly through lockbook:
+
+```bash
+mv ~/.openclaw/workspace ~/.openclaw/workspace.local.bak
+ln -s /tmp/lockbook/.openclaw/workspace ~/.openclaw/workspace
+```
+
+Now all agent reads/writes go directly to the lockbook NFS mount. Human edits on their phone appear immediately at `~/.openclaw/workspace/` on the agent's machine.
+
+---
+
 ## Initial seeding (first-time only)
 
 If you need to push existing disk files into a fresh lockbook account, use `lockbook copy` once:
