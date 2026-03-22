@@ -31,7 +31,7 @@ metadata:
 
 # Lockbook
 
-Lockbook = end-to-end encrypted file storage with sharing. The human owns the `.openclaw/` folder in their lockbook and shares it (write access) to the agent's lockbook account. The server never sees plaintext — real E2E, not just access control.
+Lockbook = end-to-end encrypted file storage with real-time sync and built-in conflict resolution. The human shares their `.openclaw/` folder (write access) with the agent's lockbook account. Lockbook handles merge conflicts automatically for text files — both sides can edit simultaneously and sync will 3-way merge the result.
 
 ## Install options
 
@@ -52,11 +52,30 @@ The lockbook binary may land in `~/.cargo/bin/lockbook` (cargo) or `/usr/bin/loc
 
 ---
 
+## How sync works
+
+`lockbook fs` mounts your entire lockbook tree as an NFS filesystem at `/tmp/lockbook`. Any file written there syncs to the lockbook server every 30 seconds. Lockbook handles merge conflicts natively:
+
+- **Text files** (`.md`, `.txt`, `.json`, etc.) → 3-way merge, both edits preserved
+- **Binary/other files** → duplicate created with incremented name on conflict
+
+This means the agent and human can both edit the same files simultaneously. No custom conflict logic needed.
+
+```
+Agent edits /tmp/lockbook/.openclaw/workspace/MEMORY.md
+                    ↓ lockbook fs syncs every 30s
+Human edits MEMORY.md from phone
+                    ↓ lockbook sync + 3-way merge
+Both see merged result
+```
+
+---
+
 ## First-time setup
 
-Read `references/agent-accounts.md` for the full walkthrough. Summary below.
+> **At the end of setup, always ask:** "Do you want me to set up `lockbook fs` so your workspace stays in sync automatically? Most people want this." If yes, follow Step 5.
 
-> **At the end of setup, always ask:** "Do you want me to set up automatic sync so your workspace stays in sync with lockbook every 2 minutes? Most people want this." If yes, follow Step 5.
+Read `references/agent-accounts.md` for the full walkthrough. Summary below.
 
 ### Step 1 — Check if your human has a lockbook account
 
@@ -119,15 +138,9 @@ lockbook list                # .openclaw/ should now appear
 
 ⚠️ **Known gotcha:** `lockbook share accept` requires two args: the share ID and a target path. Passing just the ID fails with "Missing required argument: target". Pass `/` to place it at root.
 
-⚠️ **Known gotcha:** After accepting, `lockbook list .openclaw/` may show empty even if the share was successful — the folder is legitimately empty until the human puts files in it or the agent imports workspace files.
+### Step 5 — Set up `lockbook fs` (recommended)
 
-### Step 5 — Set up automatic sync (recommended)
-
-Ask the human if they want auto-sync before doing this. Most will say yes.
-
-**Linux (systemd) — preferred on Arch/Ubuntu/etc:**
-
-Run `lockbook fs` as a persistent systemd service. It mounts lockbook at `/tmp/lockbook` and syncs every 30 seconds — reads and writes both work.
+`lockbook fs` mounts lockbook at `/tmp/lockbook` and syncs every 30 seconds — reads and writes both work transparently.
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -139,7 +152,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/bin/bash -c 'echo Y | /path/to/lockbook fs'
+ExecStart=/bin/bash -c 'echo Y | /home/ruby/.cargo/bin/lockbook fs'
 Restart=on-failure
 RestartSec=10
 StandardOutput=append:%h/.openclaw-sync.log
@@ -149,79 +162,64 @@ StandardError=append:%h/.openclaw-sync.log
 WantedBy=default.target
 EOF
 
-cat > ~/.config/systemd/user/lockbook-fs.service << 'EOF'
-[Unit]
-Description=OpenClaw Lockbook Sync Timer
-
-[Timer]
-OnBootSec=30
-OnUnitActiveSec=2min
-
-[Install]
-WantedBy=default.target
-EOF
-
 systemctl --user daemon-reload
 systemctl --user enable --now lockbook-fs.service
-systemctl --user status lockbook-fs.service
 ```
 
-⚠️ Update the lockbook binary path in the service file if it's not at `/home/ruby/.cargo/bin/lockbook` — check with `which lockbook`.
+⚠️ Update the lockbook binary path if it's not at `/home/ruby/.cargo/bin/lockbook` — check with `which lockbook`.
 
-Verify the first run succeeds (fires ~30s after boot):
+Verify it's mounted:
 ```bash
-systemctl --user status lockbook-fs.service
-cat ~/.openclaw-sync.log
+ls /tmp/lockbook          # should show your lockbook root
+ls /tmp/lockbook/.openclaw/
 ```
 
-**macOS:** `lockbook fs` works the same way — run it as a launchd service or just keep it in a terminal.
+**macOS:** `lockbook fs` works the same — run it as a launchd service or keep it in a terminal.
 
 ---
 
-## Sync — use `lockbook fs` (NFS mount)
+## Using the mounted filesystem
 
-The right way to sync bidirectionally is `lockbook fs` — it mounts your lockbook as an NFS filesystem at `/tmp/lockbook`. Any file written there is automatically synced to the lockbook server every 30 seconds. No copy/delete dance needed.
-
-```
-/tmp/lockbook/.openclaw/workspace/   ← reads/writes here sync to lockbook automatically
-```
-
-⚠️ **Never use `lockbook copy <dir>` on a timer** — it creates a new nested duplicate every run with no way to detect collisions. It's an import tool, not a sync tool.
-
-### Checking the mount
+Once `lockbook fs` is running, the agent can read and write files directly at `/tmp/lockbook/.openclaw/`. Changes sync to the human's devices automatically.
 
 ```bash
-ls /tmp/lockbook          # should show your lockbook root
-ls /tmp/lockbook/.openclaw/workspace/
+# Agent writes to the shared workspace
+echo "updated" >> /tmp/lockbook/.openclaw/workspace/MEMORY.md
+
+# Human sees it on their phone within 30s
+
+# Human edits the same file from their phone
+# Agent sees the merged result within 30s
 ```
 
-### Manual sync (without fs mount)
+---
+
+## Seeding a new lockbook account (bulk import)
+
+For first-time setup or migrating existing workspace files into lockbook, use `lockbook copy` once. This is a **one-shot import tool**, not a sync tool.
 
 ```bash
-# Pull only — lockbook → local disk
-lockbook sync && lockbook export .openclaw/ /tmp/lockbook-export/
-# Files land at /tmp/lockbook-export/.openclaw/
+# Create destination folder in lockbook first
+lockbook new .openclaw/workspace/
 
-# Push a specific file (not a directory)
-lockbook copy /path/to/file.md .openclaw/
+# Then copy workspace contents into it (once)
+lockbook copy ~/.openclaw/workspace/ .openclaw/workspace/
 lockbook sync
 ```
 
-**Before reading shared files** — always pull first.
-**After writing files** — always push then sync.
+⚠️ **`lockbook copy` is not idempotent** — running it twice creates duplicates (`.openclaw/workspace-1/`, etc.). Use it for initial seeding only. After that, let `lockbook fs` handle sync.
 
 ---
 
 ## CLI quick reference
 
 ```bash
-lockbook sync                                          # Sync with server
+lockbook fs                                            # Mount at /tmp/lockbook (primary sync method)
+lockbook sync                                          # One-shot sync with server
 lockbook list                                          # List all files/folders
-lockbook list .openclaw/                               # List contents of shared folder
-lockbook export .openclaw/ ~/.openclaw/                # Pull lockbook → local
-lockbook copy ~/.openclaw/ .openclaw/                # Push local → lockbook
-lockbook export .openclaw/somefile.md /tmp/somefile.md # Export single file
-lockbook copy /tmp/report.md .openclaw/reports/      # Import single file
+lockbook list .openclaw/                               # List shared folder contents
+lockbook export .openclaw/workspace/ ~/backup/         # One-time export to disk
+lockbook copy /path/to/file.md .openclaw/              # Import a single file (one-shot only)
 lockbook usage                                         # Check storage usage
 lockbook share new .openclaw/ <username> --mode=write  # Share a folder
 lockbook share pending                                 # List pending shares
@@ -232,10 +230,10 @@ lockbook share accept <id> /                           # Accept a share (target 
 
 ## Gotchas
 
+- **`lockbook fs` is the only safe ongoing sync method** — `lockbook copy` on a timer creates duplicates
 - **`share accept` needs a target** — always pass `/` as the second arg or it errors with "Missing required argument: target"
-- **`lockbook export` overwrites local files** — pull before push if you have local-only changes
-- **Last-write-wins** — no merge. Fine for config/logs where agent and human don't edit the same file simultaneously
 - **Free tier is 25MB compressed** (~125MB of text). Run `lockbook usage` to check
 - **Agent key must live outside `~/.openclaw`** — store at `~/.lockbook-agent-key` so it doesn't sync to the human
-- **cargo install is slow** — ~6 minutes on a typical machine; prefer AUR/snap/brew
+- **cargo install is slow** — ~6 minutes; prefer AUR/snap/brew
 - **Binary path** — cargo installs to `~/.cargo/bin/lockbook`; AUR installs to `/usr/bin/lockbook`. Use full path in exec commands
+- **`lockbook copy <dir>` wraps the directory** — always creates a new child inside dest, never syncs in place
