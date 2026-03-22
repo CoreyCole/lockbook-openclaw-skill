@@ -127,23 +127,18 @@ Ask the human if they want auto-sync before doing this. Most will say yes.
 
 **Linux (systemd) — preferred on Arch/Ubuntu/etc:**
 
-⚠️ **Do NOT** use `lockbook copy ~/.openclaw/ .openclaw/` — this copies the directory *itself* into the dest each run, creating `.openclaw/.openclaw/`, `.openclaw/.openclaw-1/`, etc. Instead, sync a specific subfolder (e.g. `workspace/`) that was pre-created in lockbook.
-
-Before enabling auto-sync, make sure the destination folder already exists in lockbook:
-```bash
-lockbook new .openclaw/workspace/
-```
+Auto-sync pulls from lockbook → disk only. The human pushes files from their device via the lockbook app or CLI. The agent never pushes in a loop (it creates duplicates every run).
 
 ```bash
 mkdir -p ~/.config/systemd/user
 
 cat > ~/.config/systemd/user/lockbook-sync.service << 'EOF'
 [Unit]
-Description=OpenClaw Lockbook Sync
+Description=OpenClaw Lockbook Sync (pull only)
 
 [Service]
 Type=oneshot
-ExecStart=/bin/bash -c '/home/ruby/.cargo/bin/lockbook copy %h/.openclaw/workspace/ .openclaw/workspace/ && /home/ruby/.cargo/bin/lockbook sync'
+ExecStart=/bin/bash -c '/home/ruby/.cargo/bin/lockbook sync && /home/ruby/.cargo/bin/lockbook export .openclaw/ /tmp/lockbook-openclaw/ 2>/dev/null; echo "synced at $(date)"'
 StandardOutput=append:%h/.openclaw-sync.log
 StandardError=append:%h/.openclaw-sync.log
 EOF
@@ -184,17 +179,24 @@ crontab -e
 
 ## Sync
 
-All sync uses import/export. No NFS mount required — works everywhere.
+**Key insight:** `lockbook copy` and `lockbook export` both wrap the source directory as a new child inside the destination — there is no "sync in place" mode. Every `lockbook copy <dir> <dest>` call creates a new nested copy.
+
+**The correct mental model:** lockbook is for the **human to push files to the agent**, not the other way around. The agent's workspace lives on disk and doesn't need to be pushed back to lockbook. Auto-sync should only pull (lockbook → disk).
 
 ```bash
-# Pull lockbook → local disk
-lockbook sync && lockbook export .openclaw/workspace/ ~/.openclaw/workspace/
+# Pull: lockbook → local disk (safe, human-to-agent direction)
+lockbook sync && lockbook export .openclaw/ /tmp/lockbook-openclaw/
+# Files land at /tmp/lockbook-openclaw/.openclaw/<your files>
 
-# Push local disk → lockbook (dest folder must already exist in lockbook)
-lockbook copy ~/.openclaw/workspace/ .openclaw/workspace/ && lockbook sync
+# Push: human does this from their device (app or CLI)
+# Agent should NOT run lockbook copy in a loop — it creates duplicates every run
 ```
 
-⚠️ `lockbook copy <dir> <dest>` copies the directory *into* dest. If dest doesn't exist as a pre-created lockbook folder, each run creates a new nested copy (`.openclaw/`, `.openclaw-1/`, etc.). Always pre-create the destination with `lockbook new` before syncing.
+⚠️ **Never run `lockbook copy <dir>` on a timer** — it creates a new nested directory every run (`.openclaw/`, `.openclaw-1/`, `.openclaw-2/`...). There is no idempotent push. If you need the agent to write files back to lockbook, do it manually for specific files only:
+```bash
+lockbook copy /path/to/specific-file.md .openclaw/
+lockbook sync
+```
 
 **Before reading shared files** — always pull first.
 **After writing files** — always push then sync.
