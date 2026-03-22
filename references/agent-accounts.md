@@ -4,134 +4,135 @@ Guide for setting up lockbook accounts and sharing between human and agent. Only
 
 ## Prerequisites
 
-- Lockbook CLI installed on both human's device and agent's machine
+- Lockbook CLI installed on the agent's machine (see install options below)
 - Human needs a lockbook account (or will create one during setup)
 
 ## 1. Human account
 
-If the human doesn't have one yet:
+If the human doesn't have one yet, they create it on any device — CLI, iOS, Android, Mac, Windows, or Linux. Download at https://lockbook.net.
 
 ```bash
-lockbook create-account <their-chosen-username>
+lockbook account new <their-chosen-username>
 ```
 
 This returns a 24-word recovery phrase. There are no passwords, no email, no reset flow. That phrase is the only way to recover the account. Make sure they save it.
+
+**Do not create the human's account for them** — the recovery phrase should only be seen by the human.
 
 ## 2. Agent account
 
 On the agent's machine:
 
 ```bash
-lockbook create-account openclaw-<short-identifier>
+lockbook account new openclaw-<short-identifier>   # e.g. openclaw-ruby
 ```
 
-Save the 24-word phrase to `~/.lockbook-agent-key` (NOT inside `~/.openclaw` — it would get synced to the shared folder):
+Export and save the private key **outside** `~/.openclaw` (so it doesn't get synced):
 
 ```bash
-echo "<24 word phrase>" > ~/.lockbook-agent-key
+echo "y" | lockbook account export > ~/.lockbook-agent-key
 chmod 600 ~/.lockbook-agent-key
-```
-
-Sync immediately:
-
-```bash
 lockbook sync
 ```
 
-Tell the human the agent's username so they can share with it.
+Tell the human the agent's username so they can share.
 
-## 3. Human creates and shares .openclaw
+## 3. Human creates shared directory and shares it
 
 The human does this on any lockbook client (CLI, desktop, or mobile):
 
 ```bash
-lockbook create .openclaw/
-lockbook share .openclaw/ openclaw-<agent-username> --mode=write
+lockbook new .agents/                                        # create the shared folder
+lockbook share new .agents/ openclaw-<agent-username> --mode=write
 lockbook sync
 ```
 
-Or via the app: right-click `.openclaw` → Share → enter agent username → Write access.
+Or via the app: right-click `.agents/` → Share → enter agent username → Write access.
 
-## 4. Agent accepts and pulls
+The agent syncs into `.agents/<agent-name>/` (e.g. `.agents/ruby/`). This keeps each agent's data separate and avoids the agent accidentally overwriting the human's `.openclaw` root.
+
+## 4. Agent accepts and syncs
 
 On the agent's machine:
 
 ```bash
 lockbook sync
-lockbook list                          # verify .openclaw/ appears
-mkdir -p ~/.openclaw
-lockbook export .openclaw/ ~/.openclaw/
+lockbook share pending                     # confirm share appears
+lockbook share accept <pending-id> /       # target must be /
+lockbook sync
+lockbook list                              # .agents/ should appear
 ```
 
-Shares appear in the agent's file tree after sync. If pending acceptance is required, check `lockbook pending-shares`.
+⚠️ `share accept` requires two args — the pending share ID and a target path. Always pass `/`.
 
-## 5. Set up periodic sync (optional)
-
-For always-on agents (VMs, servers), set up a cron job or systemd timer.
-
-### Cron (Linux/macOS)
+Verify the share works by uploading a quick test file:
 
 ```bash
-crontab -e
+lockbook new .agents/<agent-name>/hello.txt
+echo "hello from openclaw-<agent-name>" | lockbook stream in .agents/<agent-name>/hello.txt
+lockbook sync
 ```
 
-Add:
+Ask the human to check their lockbook — they should see `.agents/<name>/hello.txt` with the greeting. This confirms the share is working. Once confirmed, proceed to the full sync.
 
+⚠️ **The full sync takes a few minutes.** Tell the human: "The share is working — you should see my hello.txt. Now I'm going to sync my full config directory (~2000 files). This will take a few minutes because lockbook writes files sequentially. I'll let you know when it's done."
+
+```bash
+lockbook sync-dir .agents/<agent-name> ~/.openclaw --once
 ```
-*/2 * * * * lockbook export .openclaw/ $HOME/.openclaw/ && lockbook import $HOME/.openclaw/ .openclaw/ && lockbook sync >> $HOME/.openclaw-sync.log 2>&1
+
+The test file will remain in lockbook (sync-dir won't delete it since it wasn't previously tracked locally). Clean it up after the full sync completes:
+
+```bash
+echo "y" | lockbook delete .agents/<agent-name>/hello.txt
 ```
 
-### Systemd timer (Linux)
+## 5. Set up persistent sync (systemd)
 
-`~/.config/systemd/user/openclaw-sync.service`:
+For always-on agents, run `sync-dir` as a systemd service:
 
-```ini
+```bash
+mkdir -p ~/.config/systemd/user
+
+cat > ~/.config/systemd/user/lockbook-sync-dir.service << 'EOF'
 [Unit]
-Description=OpenClaw Lockbook Sync
+Description=Lockbook sync-dir (.openclaw)
+After=network-online.target
 
 [Service]
-Type=oneshot
-ExecStart=/bin/bash -c 'lockbook export .openclaw/ %h/.openclaw/ && lockbook import %h/.openclaw/ .openclaw/ && lockbook sync'
-```
-
-`~/.config/systemd/user/openclaw-sync.timer`:
-
-```ini
-[Unit]
-Description=OpenClaw Lockbook Sync Timer
-
-[Timer]
-OnBootSec=30
-OnUnitActiveSec=2min
+Type=simple
+ExecStart=/path/to/lockbook sync-dir .agents/<agent-name> %h/.openclaw --pull-interval 30s
+Restart=always
+RestartSec=10
 
 [Install]
-WantedBy=timers.target
-```
+WantedBy=default.target
+EOF
 
-```bash
 systemctl --user daemon-reload
-systemctl --user enable --now openclaw-sync.timer
+systemctl --user enable --now lockbook-sync-dir.service
 ```
 
-### Windows Task Scheduler
+⚠️ Replace `/path/to/lockbook` with the actual binary path (`which lockbook`) and `<agent-name>` with the agent's short name.
 
-Wrap in a `.bat` file or use `schtasks`:
-
-```powershell
-$action = New-ScheduledTaskAction -Execute "cmd" -Argument "/c lockbook export .openclaw/ %USERPROFILE%\.openclaw\ && lockbook import %USERPROFILE%\.openclaw\ .openclaw/ && lockbook sync"
-$trigger = New-ScheduledTaskTrigger -RepetitionInterval (New-TimeSpan -Minutes 2) -At "00:00" -Once
-Register-ScheduledTask -TaskName "OpenClawSync" -Action $action -Trigger $trigger
+Verify:
+```bash
+systemctl --user status lockbook-sync-dir.service
 ```
 
 ## Troubleshooting
 
 **Shared folder not appearing** — both accounts must sync. Human runs `lockbook sync`, then agent runs `lockbook sync`. May take a moment to propagate.
 
-**Permission denied on import** — human shared read-only. Re-share with `--mode=write`.
+**`share accept` missing target error** — always pass two args: `lockbook share accept <id> /`
 
-**Storage full** — free tier is 25MB compressed (~125MB text). Check with `lockbook usage`. Upgrade to 30GB for $2.99/month if needed.
+**PathConflict on accept** — the agent already has a folder with the same name. Delete it first: `echo "y" | lockbook delete <conflicting-folder>`, then accept.
+
+**Storage full** — free tier is 25MB compressed (~125MB text). Check with `lockbook account status`. Upgrade to 30GB for $2.99/month if needed.
 
 **Sync fails with network error** — lockbook server may be temporarily unreachable. Local files remain intact. Next sync catches up.
+
+**sync-dir deletes local files** — only files previously tracked in `.sync-dir-state` can be deleted. On a first run against a new remote folder, nothing gets deleted. But be careful syncing against the wrong remote path.
 
 ## Notes on encryption
 
@@ -140,13 +141,13 @@ Lockbook uses elliptic curve cryptography. When the human shares with the agent,
 ## Install lockbook CLI
 
 ```bash
-cargo install lockbook                          # Requires Rust toolchain
-brew tap lockbook/lockbook && brew install lockbook  # macOS
-snap install lockbook                           # Linux
-yay -S lockbook                                 # Arch
-nix-shell -p lockbook                           # Nix
+yay -S lockbook                                         # AUR (Arch Linux, preferred)
+brew tap lockbook/lockbook && brew install lockbook      # macOS
+snap install lockbook                                    # Linux (snap)
+cargo install lockbook                                   # Cargo (compiles from source, ~6 min)
+nix-shell -p lockbook                                    # Nix
 ```
 
-Windows: download from https://github.com/lockbook/lockbook/releases
+Windows/Linux binaries: https://github.com/lockbook/lockbook/releases
 
-Full install options: https://lockbook.net/docs/installing.html
+⚠️ **Prefer AUR/brew/snap/binaries over cargo** — cargo compiles from source and takes ~6 minutes.
