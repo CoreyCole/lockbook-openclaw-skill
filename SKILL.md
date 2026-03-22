@@ -127,6 +127,13 @@ Ask the human if they want auto-sync before doing this. Most will say yes.
 
 **Linux (systemd) — preferred on Arch/Ubuntu/etc:**
 
+⚠️ **Do NOT** use `lockbook copy ~/.openclaw/ .openclaw/` — this copies the directory *itself* into the dest each run, creating `.openclaw/.openclaw/`, `.openclaw/.openclaw-1/`, etc. Instead, sync a specific subfolder (e.g. `workspace/`) that was pre-created in lockbook.
+
+Before enabling auto-sync, make sure the destination folder already exists in lockbook:
+```bash
+lockbook new .openclaw/workspace/
+```
+
 ```bash
 mkdir -p ~/.config/systemd/user
 
@@ -136,7 +143,7 @@ Description=OpenClaw Lockbook Sync
 
 [Service]
 Type=oneshot
-ExecStart=/bin/bash -c '/home/ruby/.cargo/bin/lockbook copy %h/.openclaw/ .openclaw/ && /home/ruby/.cargo/bin/lockbook sync'
+ExecStart=/bin/bash -c '/home/ruby/.cargo/bin/lockbook copy %h/.openclaw/workspace/ .openclaw/workspace/ && /home/ruby/.cargo/bin/lockbook sync'
 StandardOutput=append:%h/.openclaw-sync.log
 StandardError=append:%h/.openclaw-sync.log
 EOF
@@ -181,11 +188,13 @@ All sync uses import/export. No NFS mount required — works everywhere.
 
 ```bash
 # Pull lockbook → local disk
-lockbook sync && lockbook export .openclaw/ ~/.openclaw/
+lockbook sync && lockbook export .openclaw/workspace/ ~/.openclaw/workspace/
 
-# Push local disk → lockbook
-lockbook copy ~/.openclaw/ .openclaw/ && lockbook sync
+# Push local disk → lockbook (dest folder must already exist in lockbook)
+lockbook copy ~/.openclaw/workspace/ .openclaw/workspace/ && lockbook sync
 ```
+
+⚠️ `lockbook copy <dir> <dest>` copies the directory *into* dest. If dest doesn't exist as a pre-created lockbook folder, each run creates a new nested copy (`.openclaw/`, `.openclaw-1/`, etc.). Always pre-create the destination with `lockbook new` before syncing.
 
 **Before reading shared files** — always pull first.
 **After writing files** — always push then sync.
