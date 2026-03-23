@@ -57,7 +57,7 @@ Human's phone / desktop
 Official install paths from https://lockbook.net:
 
 ```bash
-yay -S lockbook                                         # AUR (Arch Linux, preferred)
+yay -S lockbook                                          # AUR (Arch Linux, preferred)
 brew tap lockbook/lockbook && brew install lockbook      # brew (macOS)
 snap install lockbook                                    # Snap
 cargo install lockbook                                   # Cargo (compiles from source, ~6 min)
@@ -80,8 +80,8 @@ Read `references/agent-accounts.md` for the full walkthrough. Summary:
 ## CLI quick reference
 
 ```bash
-lockbook sync-dir <lb-folder> <local-dir> --once     # one-shot sync
-lockbook sync-dir <lb-folder> <local-dir>             # long-running sync
+lockbook sync-dir <lb-folder> <local-dir> --once       # one-shot sync
+lockbook sync-dir <lb-folder> <local-dir>              # long-running sync
 lockbook sync                                          # sync metadata with server
 lockbook list                                          # list all files/folders
 lockbook list <folder>                                 # list folder contents
