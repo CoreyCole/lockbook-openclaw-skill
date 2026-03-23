@@ -69,7 +69,7 @@ nix-shell -p lockbook                                    # Nix
 
 Read `references/agent-accounts.md` for the full walkthrough. Summary:
 
-1. **Human creates account** (if needed) — `lockbook account new <username>` on their device
+1. **Human creates account** Download the iOS, Android, Mac, Windows or Linux native applications from [lockbook.net](https://lockbook.net)
 2. **Agent creates account** — `lockbook account new openclaw-<name>`
 3. **Human shares `.agents/`** — `lockbook share new .agents/ openclaw-<name> --mode=write`
 4. **Agent accepts share** — `lockbook share accept <id> /`
