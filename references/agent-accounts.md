@@ -11,10 +11,6 @@ Guide for setting up lockbook accounts and sharing between human and agent. Only
 
 If the human doesn't have one yet, they create it on any device — CLI, iOS, Android, Mac, Windows, or Linux. Download at https://lockbook.net.
 
-```bash
-lockbook account new <their-chosen-username>
-```
-
 This returns a 24-word recovery phrase. There are no passwords, no email, no reset flow. That phrase is the only way to recover the account. Make sure they save it.
 
 **Do not create the human's account for them** — the recovery phrase should only be seen by the human.
