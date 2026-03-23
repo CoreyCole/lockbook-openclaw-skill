@@ -45,7 +45,7 @@ lockbook sync
 
 Or via the app: right-click `.agents/` → Share → enter agent username → Write access.
 
-The agent syncs into `.agents/<agent-name>/` (e.g. `.agents/ruby/`). This keeps each agent's data separate and avoids the agent accidentally overwriting the human's `.openclaw` root.
+The agent syncs into `.agents/<agent-name>/` (e.g. `.agents/ruby/`).
 
 ## 4. Agent accepts and syncs
 
